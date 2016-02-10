@@ -7,7 +7,9 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
+	"net/http"
 	"os"
 	"path"
 	"time"
@@ -17,9 +19,38 @@ import (
 type Config struct {
 	*oauth2.Config
 	// Storage stores and retrieves tokens
-	storage TokenStorage
+	Storage TokenStorage
 }
 
+// Exchange is a wrapper function for oauth2.Config.Exchange.
+// Underneath the hood it calls TokenStorage.StoreToken when a valid token is exchanged.
+func (c *Config) Exchange(ctx context.Context, code string) (*oauth2.Token, error) {
+	token, err := c.Config.Exchange(ctx, code)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.Storage.StoreToken(token); err != nil {
+		return nil, err
+	}
+	return token, nil
+}
+
+// Client is a wrapper function for oauth2.Config.Client
+func (c *Config) Client(ctx context.Context, t *oauth2.Token) *http.Client {
+	return oauth2.NewClient(ctx, c.TokenSource(ctx, t))
+}
+
+// TokenSource returns a ReuseTokenSource.
+func (c *Config) TokenSource(ctx context.Context, t *oauth2.Token) oauth2.TokenSource {
+	tts := &TokenStorageSource{
+		source: c.Config.TokenSource(ctx, t),
+		config: c,
+	}
+	return oauth2.ReuseTokenSource(t, tts)
+}
+
+// TokenStorage is an interface designed to store tokens
+// in a persistence layer and to recreate tokens from that persisted data.
 type TokenStorage interface {
 	// StoreToken attempts to persist a token for future retrieval.
 	// If persistence is not successful it returns an error.
@@ -28,6 +59,23 @@ type TokenStorage interface {
 	RestoreToken() (*oauth2.Token, error)
 }
 
+type TokenStorageSource struct {
+	source oauth2.TokenSource
+	config *Config
+}
+
+func (t *TokenStorageSource) Token() (*oauth2.Token, error) {
+	token, err := t.source.Token()
+	if err != nil {
+		return nil, err
+	}
+	if err := t.config.Storage.StoreToken(token); err != nil {
+		return nil, err
+	}
+	return token, nil
+}
+
+// FileTokenStorage stores tokens in csv files
 type FileTokenStorage struct {
 	// StoragePath is the folder path where the token file will be stored.
 	StoragePath string
