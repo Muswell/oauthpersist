@@ -68,6 +68,10 @@ func TestFileTokenStorage(t *testing.T) {
 		t.Errorf("fileStore.RestoreToken unexpected error got %s expected %s", err.Error(), "TokenId not set")
 	}
 
+	if fileStore.DeleteToken() == nil {
+		t.Errorf("fileStore.DeleteToken expected a TokenId error.")
+	}
+
 	fileStore.TokenId = 123
 	// Expecting IO errors
 	err = fileStore.StoreToken(token)
@@ -88,6 +92,7 @@ func TestFileTokenStorage(t *testing.T) {
 	if err != nil {
 		t.Errorf("FileTokenStorage.StoreToken returned a non nil error %v", err)
 	}
+
 	defer fileStore.DeleteToken()
 
 	restoredToken, err := fileStore.RestoreToken()
