@@ -1,4 +1,4 @@
-package oauthtokens
+package oauthpersist
 
 import (
 	"encoding/base64"

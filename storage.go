@@ -1,7 +1,7 @@
 // Oauthtokens provides functions that store and retrieve tokens from the golang.org/oauth2 package.
 // This package borrows from the Redis storage config created by Aaron Torres.
 // https://gist.github.com/agtorre/350c5b4ce0ccebc5ac0f
-package oauthtokens
+package oauthpersist
 
 import (
 	"encoding/csv"
