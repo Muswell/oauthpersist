@@ -1,13 +1,15 @@
 package oauthpersist
 
 import (
+	"database/sql"
 	"encoding/base64"
-	"fmt"
+	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/oauth2"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +23,6 @@ func TestFileTokenStorage(t *testing.T) {
 		TokenType:    "bearer",
 	}
 
-	fmt.Sprint()
 	fileStore := FileTokenStorage{}
 
 	// Expecting No StoragePath Errors
@@ -122,6 +123,68 @@ func TestFileTokenStorage(t *testing.T) {
 	}
 }
 
+func TestSQLTokenStorage(t *testing.T) {
+	token := &oauth2.Token{
+		AccessToken:  "abc",
+		RefreshToken: "def",
+		Expiry:       time.Now().Add(time.Hour * 1),
+		TokenType:    "bearer",
+	}
+
+	dbName := "test.sqlite"
+
+	if _, err := os.Create(dbName); err != nil {
+		t.Errorf("could not create %s: %v", dbName, err)
+	}
+	defer os.Remove(dbName)
+
+	db, err := sql.Open("sqlite3", dbName)
+	if err != nil {
+		t.Errorf("Could not open DB %s", dbName)
+	}
+	if err := createTokenTable(db); err != nil {
+		t.Errorf("Could not create token table %v", err)
+	}
+
+	sqlStore := SQLTokenStorage{
+		DB: db,
+	}
+
+	err = sqlStore.StoreToken(token)
+	if err != nil {
+		t.Errorf("Error storing token %v", err)
+	}
+
+	if sqlStore.ID.(int64) != 1 {
+		t.Error("Expecting StoreToken to update ID, got %d, expected %d", sqlStore.ID.(int64), 1)
+	}
+
+	restored, err := sqlStore.RestoreToken()
+	if err != nil {
+		t.Errorf("Could not RestoreToken: %v", err)
+	}
+
+	if restored.AccessToken != token.AccessToken {
+		t.Errorf("Incorrect AccessToken, got %s expected %s", restored.AccessToken, token.AccessToken)
+	}
+
+	if restored.RefreshToken != token.RefreshToken {
+		t.Errorf("Incorrect RefreshToken, got %s expected %s", restored.RefreshToken, token.RefreshToken)
+	}
+
+	if restored.TokenType != token.TokenType {
+		t.Errorf("Incorrect TokenType, got %s expected %s", restored.TokenType, token.TokenType)
+	}
+
+	if !restored.Expiry.Equal(token.Expiry) {
+		t.Errorf("Incorrect Expiry, got %s expected %s", restored.Expiry, token.Expiry)
+	}
+
+	if err := sqlStore.DeleteToken(); err != nil {
+		t.Errorf("Error could not delete token: %v", err)
+	}
+}
+
 func TestConfigStorage(t *testing.T) {
 	storage := &FileTokenStorage{
 		StoragePath: "testtokens",
@@ -215,4 +278,19 @@ func TestConfigStorage(t *testing.T) {
 	if sourceToken.AccessToken != "aNewAccessToken" {
 		t.Errorf("Expected a token refresh of access token. Got %s epected %s", sourceToken.AccessToken, "aNewAccessToken")
 	}
+}
+
+func createTokenTable(db *sql.DB) error {
+	_, err := db.Exec(`CREATE TABLE oauth2_tokens
+		(
+		    id INTEGER PRIMARY KEY,
+		    access_token VARCHAR(250) NOT NULL,
+		    refresh_token CARCHAR(250) NOT NULL,
+		    expiry DATETIME,
+		    token_type VARCHAR(40)
+		);
+		CREATE UNIQUE INDEX table_name_id_uindex ON oauth2_tokens (id);
+		CREATE UNIQUE INDEX table_name_access_token_uindex ON oauth2_tokens (access_token);
+		CREATE UNIQUE INDEX table_name_refresh_token_uindex ON oauth2_tokens (refresh_token)`)
+	return err
 }

@@ -4,6 +4,7 @@
 package oauthpersist
 
 import (
+	"database/sql"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -171,4 +172,93 @@ func (store *FileTokenStorage) DeleteToken() error {
 
 	filename := path.Join(store.StoragePath, tokenIdStr+".csv")
 	return os.Remove(filename)
+}
+
+// SQLTokenStorage stores tokens in using an sql.DB files
+
+type SQLTokenStorage struct {
+	// Database which will store the token.
+	// Assumed to have a table named oauth2_tokens with the following fields:
+	// - id
+	// - access_token
+	// - refresh_token
+	// - expiry
+	// - token_type
+	*sql.DB
+	// Unique identifier for a token, usually a user id.
+	// Required for ReadToken and DestroyToken. If nil for StoreToken, auto-generation assumed.
+	ID interface{}
+	// todo add table prefix.
+}
+
+// SQLTokenStorage.StoreToken saves a token into an SQL DB
+func (store *SQLTokenStorage) StoreToken(token *oauth2.Token) error {
+	// If nil assume auto-increment.
+	if store.ID == nil {
+		res, err := store.DB.Exec(
+			"INSERT INTO oauth2_tokens (access_token, refresh_token, expiry, token_type) "+
+				"VALUES($1, $2, $3, $4)",
+			token.AccessToken,
+			token.RefreshToken,
+			token.Expiry,
+			token.TokenType,
+		)
+		if err != nil {
+			return err
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			return err
+		}
+		store.ID = id
+		return err
+	}
+	_, err := store.DB.Exec(
+		"INSERT OR REPLACE INTO oauth2_tokens (id, access_token, refresh_token, expiry, token_type) "+
+			"VALUES($1, $2, $3, $4, $5)",
+		store.ID,
+		token.AccessToken,
+		token.RefreshToken,
+		token.Expiry,
+		token.TokenType,
+	)
+
+	return err
+}
+
+// SQLTokenStorage.RestoreToken returns an oauth2.Token from a DB.
+func (store *SQLTokenStorage) RestoreToken() (*oauth2.Token, error) {
+	if store.ID == nil {
+		return nil, fmt.Errorf("SQLTokenStorage.RestoreToken requires the SQLTokenStorage.TokenID to be set.")
+	}
+
+	row := store.DB.QueryRow("SELECT access_token, refresh_token, expiry, token_type "+
+		"FROM oauth2_tokens WHERE id = $1", store.ID)
+
+	var accessToken string
+	var refreshToken string
+	var expiry time.Time
+	var tokenType string
+	err := row.Scan(&accessToken, &refreshToken, &expiry, &tokenType)
+	if err != nil {
+		return nil, err
+	}
+
+	token := &oauth2.Token{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		Expiry:       expiry,
+		TokenType:    tokenType,
+	}
+
+	return token, nil
+}
+
+// SQLTokenStorage.DeleteToken returns an oauth2.Token from a file.
+func (store *SQLTokenStorage) DeleteToken() error {
+	if store.ID == nil {
+		return fmt.Errorf("SQLTokenStorage.DeleteToken requires the SQLTokenStorage.TokenID to be set.")
+	}
+	_, err := store.DB.Exec("DELETE FROM oauth2_tokens WHERE id = $1", store.ID)
+	return err
 }
